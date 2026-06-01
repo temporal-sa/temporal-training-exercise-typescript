@@ -1,0 +1,114 @@
+name: Sync Temporal skills
+
+# Weekly check for upstream updates to the vendored Temporal skills in
+# .agents/skills/. When `npx skills update` pulls in changes, this opens (or
+# updates) a PR and requests a Copilot review on it.
+#
+# Note: PRs created with the default GITHUB_TOKEN do NOT trigger the
+# `on: pull_request` workflow, so we request the Copilot review inline here
+# rather than relying on copilot-review.yml to fire.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Update vendored skills from upstream
+        run: npx --yes skills update --project -y
+
+      - name: Detect changes
+        id: diff
+        run: |
+          if [ -n "$(git status --porcelain .agents skills-lock.json)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No upstream skill changes."
+          fi
+
+      - name: Create or update pull request
+        if: steps.diff.outputs.changed == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/skills-sync
+          add-paths: |
+            .agents
+            skills-lock.json
+          commit-message: "chore: sync Temporal skills with upstream"
+          title: "chore: sync Temporal skills with upstream"
+          body: |
+            Automated sync of the vendored Temporal skills in `.agents/skills/`
+            via `npx skills update` (lockfile: `skills-lock.json`).
+
+            **Reviewer checklist**
+            - Skim the `SKILL.md` / `references/` diffs below.
+            - If upstream guidance changed materially, update
+              `.github/copilot-instructions.md` to match — that file is
+              hand-maintained and is **not** synced automatically.
+          labels: |
+            automation
+            dependencies
+
+      - name: Request Copilot review
+        if: steps.diff.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+
+          PR_NODE_ID="$(gh api graphql -f query='
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) { id }
+              }
+            }' -F owner="$OWNER" -F name="$REPO" -F number="$PR_NUMBER" \
+            --jq '.data.repository.pullRequest.id')"
+
+          COPILOT_ID="$(gh api graphql -f query='
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
+                suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 100) {
+                  nodes {
+                    login
+                    __typename
+                    ... on Bot { id }
+                    ... on User { id }
+                  }
+                }
+              }
+            }' -F owner="$OWNER" -F name="$REPO" \
+            --jq '.data.repository.suggestedActors.nodes[]
+                  | select(.login == "copilot-pull-request-reviewer")
+                  | .id')"
+
+          if [ -z "$COPILOT_ID" ]; then
+            echo "::notice::Copilot reviewer is not available for this repository."
+            exit 0
+          fi
+
+          gh api graphql -f query='
+            mutation($pr: ID!, $reviewer: ID!) {
+              requestReviews(input: { pullRequestId: $pr, userIds: [$reviewer], union: true }) {
+                pullRequest { number }
+              }
+            }' -F pr="$PR_NODE_ID" -F reviewer="$COPILOT_ID"
+
+          echo "Requested Copilot review on PR #${PR_NUMBER}."
