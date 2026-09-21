@@ -27,7 +27,7 @@ Replay (Recovery):
 Every workflow operation generates a Command that becomes an Event, here are some examples:
 
 | Workflow Code | Command Generated | Event Stored |
-|--------------|-------------------|--------------|
+| -- | -- | -- |
 | Execute activity | `ScheduleActivityTask` | `ActivityTaskScheduled` |
 | Sleep/timer | `StartTimer` | `TimerStarted` |
 | Child workflow | `StartChildWorkflowExecution` | `ChildWorkflowExecutionStarted` |
@@ -90,6 +90,7 @@ Each Temporal SDK language provides a different level of protection against non-
 - Go: The Go SDK has no runtime sandbox. Therefore, non-determinism bugs will never be immediately appararent, and are usually only observable during replay. The optional `workflowcheck` static analysis tool can be used to check for many sources of non-determinism at compile time.
 - .NET: The .NET SDK has no sandbox. It uses a custom TaskScheduler and a runtime EventListener to detect invalid task scheduling. Developers must use `Workflow.*` safe alternatives (e.g., Workflow.DelayAsync instead of Task.Delay) and avoid non-deterministic .NET Task APIs.
 - Ruby: The Ruby SDK uses Illegal Call Tracing (via `TracePoint`) to detect forbidden method calls at runtime on the workflow fiber, combined with a Durable Fiber Scheduler that makes fiber operations deterministic.
+- Rust: The Rust SDK has runtime nondeterminism detection for external async wake sources in Workflow code. Keep it enabled, use SDK primitives such as `ctx.timer()` and `temporalio_sdk::workflows::select!`, and still avoid synchronous nondeterminism by convention.
 
 Regardless of which SDK you are using, it is your responsibility to ensure that workflow code does not contain sources of non-determinism. Use SDK-specific tools as well as replay tests for doing so.
 
@@ -121,7 +122,7 @@ If you need to change workflow logic:
 1. Use the **Patching API** to support both old and new code paths
 2. Or terminate old workflows and start new ones with updated code
 
-See `versioning.md` for patching details.
+See [versioning guide](versioning.md) for patching details.
 
 ## Best Practices
 
