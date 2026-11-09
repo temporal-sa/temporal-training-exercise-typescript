@@ -11,7 +11,7 @@
       "source": "temporalio/skill-temporal-developer",
       "sourceType": "github",
       "skillPath": "SKILL.md",
-      "computedHash": "b6341930448ff2974863c35605306b18365b9999047b635002b6f508ec0aab5e"
+      "computedHash": "2f905d198a4b7d757a51d44a9388e5a6b4694ca142593b0aa5f1a22d049f682d"
     },
     "temporal-workflow-design-critic": {
       "source": "temporalio/skill-temporal-design",
