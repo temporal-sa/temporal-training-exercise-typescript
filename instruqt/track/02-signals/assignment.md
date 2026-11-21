@@ -1,5 +1,6 @@
 ---
 slug: signals
+id: mavrxqldvudu
 type: challenge
 title: 'Exercise 2: Money Transfer with Signals'
 teaser: A transfer that stops and waits for a human to approve it, then deposits or
@@ -23,28 +24,34 @@ notes:
     Signal arrives. A wait of ten seconds and a wait of ten months cost
     the same.
 tabs:
-- title: Code Editor
+- id: zhywthajwhec
+  title: Code Editor
   type: code
   hostname: workshop
   path: /root/workshop/exercise2
-- title: Worker
+- id: jjaxeawzzvou
+  title: Worker
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Terminal
+- id: nmak5a2e6vfi
+  title: Terminal
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Temporal UI
+- id: q9xgsh2vqjl6
+  title: Temporal UI
   type: service
   hostname: workshop
   path: /
   port: 8233
-- title: Solution
+- id: hvel8xgxnvt2
+  title: Solution
   type: code
   hostname: workshop
   path: /root/workshop/solution2
-- title: Network Control Panel
+- id: 2nx2h8ad8yjq
+  title: Network Control Panel
   type: service
   hostname: workshop
   path: /

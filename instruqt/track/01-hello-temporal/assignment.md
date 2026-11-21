@@ -1,5 +1,6 @@
 ---
 slug: hello-temporal
+id: izrgql2xkmvj
 type: challenge
 title: 'Exercise 1: Hello Temporal'
 teaser: Write your first Workflow, Activity and Worker. Run it and read the event
@@ -25,28 +26,34 @@ notes:
     `npm install` has already run. The Solution tab has finished code for
     every exercise. Use it when you are stuck, not before.
 tabs:
-- title: Code Editor
+- id: 339rx0sm4bie
+  title: Code Editor
   type: code
   hostname: workshop
   path: /root/workshop/exercise1
-- title: Worker
+- id: gtsrzxyu2irf
+  title: Worker
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Terminal
+- id: gqzvjvmadymg
+  title: Terminal
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Temporal UI
+- id: xjbtx4yxkwwq
+  title: Temporal UI
   type: service
   hostname: workshop
   path: /
   port: 8233
-- title: Solution
+- id: ryrcihp6vxko
+  title: Solution
   type: code
   hostname: workshop
   path: /root/workshop/solution1
-- title: Network Control Panel
+- id: wzvduhatv6ry
+  title: Network Control Panel
   type: service
   hostname: workshop
   path: /

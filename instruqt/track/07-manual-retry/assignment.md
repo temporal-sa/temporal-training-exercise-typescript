@@ -1,5 +1,6 @@
 ---
 slug: manual-retry
+id: 5hkermhwfmyj
 type: challenge
 title: 'Exercise 7: Manual Activity Retry'
 teaser: An Activity fails on bad data. Automatic retry cannot help. Fix the data with
@@ -25,33 +26,40 @@ notes:
     and run the Activity again. Everything that already succeeded stays
     succeeded.
 tabs:
-- title: Code Editor
+- id: upjiwtqz1dyc
+  title: Code Editor
   type: code
   hostname: workshop
   path: /root/workshop/exercise7
-- title: Worker
+- id: jyfxee8o6mi2
+  title: Worker
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Terminal
+- id: uotqrm7vs4wz
+  title: Terminal
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Temporal UI
+- id: yz326lx7ngle
+  title: Temporal UI
   type: service
   hostname: workshop
   path: /
   port: 8233
-- title: Solution
+- id: zye4matob3ou
+  title: Solution
   type: code
   hostname: workshop
   path: /root/workshop/solution7
-- title: Network Control Panel
+- id: nqbhvlbgbdn6
+  title: Network Control Panel
   type: service
   hostname: workshop
   path: /
   port: 5000
-- title: Signals
+- id: bx3nnqqohivw
+  title: Signals
   type: terminal
   hostname: workshop
   workdir: /root/workshop

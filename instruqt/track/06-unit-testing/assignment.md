@@ -1,5 +1,6 @@
 ---
 slug: unit-testing
+id: kfqsrbkt0nl7
 type: challenge
 title: 'Exercise 6: Unit Testing Workflows'
 teaser: Test a Workflow that waits for a human, with mocked Activities and an in-process
@@ -22,28 +23,34 @@ notes:
     private dev server for the duration of the test run. Your sandbox has
     the download cached already, so these tests finish in seconds.
 tabs:
-- title: Code Editor
+- id: 6bmeiyxqn1wp
+  title: Code Editor
   type: code
   hostname: workshop
   path: /root/workshop/exercise6
-- title: Worker
+- id: wyz1m2kp1wwn
+  title: Worker
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Terminal
+- id: k4hvnjyds9jx
+  title: Terminal
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Temporal UI
+- id: ycivyhmfysya
+  title: Temporal UI
   type: service
   hostname: workshop
   path: /
   port: 8233
-- title: Solution
+- id: at0hoqsoetjr
+  title: Solution
   type: code
   hostname: workshop
   path: /root/workshop/solution6
-- title: Network Control Panel
+- id: t6x31kqom6um
+  title: Network Control Panel
   type: service
   hostname: workshop
   path: /

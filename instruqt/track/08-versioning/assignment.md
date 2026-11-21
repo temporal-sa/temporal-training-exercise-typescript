@@ -1,5 +1,6 @@
 ---
 slug: versioning
+id: zpjyjnuwkeuk
 type: challenge
 title: 'Exercise 8: Workflow Versioning with the Patching API'
 teaser: Add a step to a Workflow that already has executions in flight. Prove the
@@ -24,28 +25,34 @@ notes:
     One boolean, two versions of the same Workflow, running on the same
     Worker at the same time.
 tabs:
-- title: Code Editor
+- id: 0rqdjfrfkpyt
+  title: Code Editor
   type: code
   hostname: workshop
   path: /root/workshop/exercise8
-- title: Worker
+- id: so119cl4mgcy
+  title: Worker
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Terminal
+- id: xg1vqcap6iat
+  title: Terminal
   type: terminal
   hostname: workshop
   workdir: /root/workshop
-- title: Temporal UI
+- id: susswzjjedaf
+  title: Temporal UI
   type: service
   hostname: workshop
   path: /
   port: 8233
-- title: Solution
+- id: qywofxxafnyj
+  title: Solution
   type: code
   hostname: workshop
   path: /root/workshop/solution8
-- title: Network Control Panel
+- id: ykk4uhch8ehi
+  title: Network Control Panel
   type: service
   hostname: workshop
   path: /
