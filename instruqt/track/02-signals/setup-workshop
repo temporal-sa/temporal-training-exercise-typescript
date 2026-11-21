@@ -1,0 +1,14 @@
+#!/bin/bash
+# ABOUTME: Per-challenge setup. Runs when the attendee enters this challenge.
+#
+# The whole repo is staged once by the sandbox preset's setup script, so this
+# only clears stragglers from a prior chapter and stamps the start time. The
+# check reads the stamp to ignore Workflows completed before this challenge.
+set -euo pipefail
+
+pkill -f "src/worker/index.ts"  2>/dev/null || true
+pkill -f "src/starter/index.ts" 2>/dev/null || true
+
+date -u +%Y-%m-%dT%H:%M:%SZ > /tmp/workshop-challenge-02.started
+
+echo "Exercise 2 ready."

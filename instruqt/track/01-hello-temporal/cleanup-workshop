@@ -1,0 +1,10 @@
+#!/bin/bash
+# ABOUTME: Per-challenge cleanup. Kill the Worker and the starter.
+# macOS pkill does not support alternation. One pattern per line.
+set -euo pipefail
+
+pkill -f "src/worker/index.ts"  2>/dev/null || true
+pkill -f "src/starter/index.ts" 2>/dev/null || true
+sleep 1
+
+echo "Exercise 1 cleanup: OK"

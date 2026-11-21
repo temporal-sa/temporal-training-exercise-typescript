@@ -1,0 +1,237 @@
+#!/bin/bash
+# ABOUTME: Sandbox preset setup script. Provisions the whole workshop sandbox.
+#
+# This is the preset's lifecycle script, named for the container in
+# ../config.yml. It ships with `instruqt sandbox push` + `instruqt sandbox
+# publish`, NOT with `instruqt track push`.
+#
+# Because it arrives with the preset rather than inside a git clone, it can
+# install its own dependencies, git included. The base image is relied on for
+# nothing beyond a Debian userland.
+#
+# Steps:
+#   1. System packages, git included
+#   2. Clone the exercise repo
+#   3. Node.js
+#   4. Temporal CLI
+#   5. Workshop dependencies (npm ci)
+#   6. mitmproxy, Flask and the mitmproxy CA cert
+#   7. The network control panel
+#   8. Environment for every shell
+#   9. Start the proxy, the control panel and the Temporal dev server
+#  10. Seed the exercise 8 replay history
+#  11. Warm the test server cache that TestWorkflowEnvironment downloads
+#
+# See ../README.md for how to ship a change to this file.
+set -euo pipefail
+
+# Pin these to a tag or a commit before a live workshop so every attendee gets
+# the same code regardless of what landed on main that morning.
+WORKSHOP_REPO="${WORKSHOP_REPO:-https://github.com/temporal-sa/temporal-training-exercise-typescript.git}"
+WORKSHOP_REF="${WORKSHOP_REF:-main}"
+WORKSHOP_DIR="${WORKSHOP_DIR:-/root/workshop}"
+NODE_MAJOR="22"
+PROXY_PYTHON_VERSION="3.12"
+
+log() { echo "==> $*"; }
+
+# 0. Wait for Instruqt host bootstrap.
+until [ -f /opt/instruqt/bootstrap/host-bootstrap-completed ]; do
+    sleep 1
+done
+
+# 1. System packages. The complete list, git included: nothing here is
+#    inherited from the base image, so add a new binary dependency to this
+#    list and nowhere else. xz-utils unpacks the Node.js tarball.
+log "Installing system packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    unzip \
+    xz-utils \
+    less \
+    vim-tiny \
+    nano \
+    procps \
+    bash-completion
+
+# 2. Clone the exercise repo. Skipped when the directory exists, which is how
+#    a local test run points the sandbox at an uncommitted working tree.
+if [ ! -d "${WORKSHOP_DIR}" ]; then
+    log "Cloning ${WORKSHOP_REPO} at ${WORKSHOP_REF}"
+    git clone --depth 1 --branch "${WORKSHOP_REF}" "${WORKSHOP_REPO}" "${WORKSHOP_DIR}"
+else
+    log "${WORKSHOP_DIR} already exists, skipping the clone"
+fi
+
+# 3. Node.js, the latest release of NODE_MAJOR, unpacked into /usr/local so
+#    node, npm and npx land on the default PATH. The check and solve scripts
+#    run non-interactively and never source a profile, so a PATH export in a
+#    profile would be invisible to them.
+case "$(uname -m)" in
+    x86_64)  NODE_ARCH=x64 ;;
+    aarch64) NODE_ARCH=arm64 ;;
+    *) echo "ERROR: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+esac
+NODE_DIST="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x"
+NODE_TARBALL=$(curl -fsSL "${NODE_DIST}/SHASUMS256.txt" \
+    | awk '{print $2}' | grep -E "^node-v[0-9.]+-linux-${NODE_ARCH}\.tar\.xz$")
+log "Installing ${NODE_TARBALL}"
+curl -fsSL "${NODE_DIST}/${NODE_TARBALL}" \
+    | tar -xJ -C /usr/local --strip-components=1 \
+        --exclude='*/CHANGELOG.md' --exclude='*/LICENSE' --exclude='*/README.md'
+node --version
+npm --version
+
+# 4. Temporal CLI.
+log "Installing the Temporal CLI"
+curl -sSf https://temporal.download/cli.sh | sh
+ln -sf /root/.temporalio/bin/temporal /usr/local/bin/temporal
+
+# 5. Workshop dependencies. node_modules lives in the tree because nothing
+#    gets staged or copied afterwards. Fall back to `npm install` if the lock
+#    file has drifted from package.json on WORKSHOP_REF, rather than leaving
+#    the sandbox without dependencies.
+log "Installing workshop dependencies"
+cd "${WORKSHOP_DIR}"
+npm ci --no-audit --no-fund || {
+    log "npm ci failed, falling back to npm install"
+    npm install --no-audit --no-fund
+}
+
+# 6. mitmproxy and Flask, in their own Python venv so the workshop's Node
+#    toolchain never has to know about them. uv supplies the interpreter.
+log "Installing mitmproxy and the control panel dependencies"
+curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+uv venv --python "${PROXY_PYTHON_VERSION}" /opt/proxy-venv
+VIRTUAL_ENV=/opt/proxy-venv uv pip install --quiet mitmproxy flask
+ln -sf /opt/proxy-venv/bin/mitmdump /usr/local/bin/mitmdump
+
+# Generate the CA cert by starting mitmdump briefly, then trust it
+# system-wide. Node does not read the system store, so step 8 also points
+# NODE_EXTRA_CA_CERTS at it for npm and for HTTPS calls from Activities.
+log "Generating and trusting the mitmproxy CA cert"
+mitmdump --listen-port 8889 --set block_global=false > /tmp/mitm-init.log 2>&1 &
+MITM_INIT_PID=$!
+for _ in $(seq 1 30); do
+    [ -f /root/.mitmproxy/mitmproxy-ca-cert.pem ] && break
+    sleep 1
+done
+kill "${MITM_INIT_PID}" 2>/dev/null || true
+wait "${MITM_INIT_PID}" 2>/dev/null || true
+
+MITM_CA=/root/.mitmproxy/mitmproxy-ca-cert.pem
+cp "${MITM_CA}" /usr/local/share/ca-certificates/mitmproxy-ca.crt
+update-ca-certificates
+
+# 7. Network control panel. These files come from the clone, so WORKSHOP_REF
+#    has to name a ref that contains instruqt/sandbox/proxy/. The addon and
+#    the panel both read and write /root/proxy/state.json, so they get a
+#    writable copy of their own.
+PROXY_SRC="${WORKSHOP_DIR}/instruqt/sandbox/proxy"
+if [ ! -d "${PROXY_SRC}" ]; then
+    echo "ERROR: ${PROXY_SRC} is missing." >&2
+    echo "       WORKSHOP_REF=${WORKSHOP_REF} does not contain instruqt/sandbox/proxy/." >&2
+    exit 1
+fi
+
+log "Staging the network control panel"
+mkdir -p /root/proxy/static
+cp -r "${PROXY_SRC}/." /root/proxy/
+
+# 8. Environment for every shell.
+#    /etc/profile.d covers login shells and the /etc/bash.bashrc line covers
+#    interactive non-login shells, which is what Instruqt's terminal tabs
+#    open. Putting them only in /etc/bash.bashrc does not work: Ubuntu's
+#    /root/.bashrc returns early for non-interactive shells.
+#
+#    NO_PROXY keeps loopback traffic off mitmproxy. @grpc/grpc-js (the
+#    Client) honors https_proxy, so without it the Client's gRPC calls to the
+#    dev server would be sent to mitmproxy.
+log "Writing shell environment"
+cat > /etc/profile.d/workshop.sh << EOF
+export TEMPORAL_ADDRESS="127.0.0.1:7233"
+export HTTP_PROXY="http://127.0.0.1:8888"
+export HTTPS_PROXY="http://127.0.0.1:8888"
+export http_proxy="http://127.0.0.1:8888"
+export https_proxy="http://127.0.0.1:8888"
+export NO_PROXY="127.0.0.1,localhost,::1"
+export no_proxy="127.0.0.1,localhost,::1"
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export NODE_EXTRA_CA_CERTS=${MITM_CA}
+EOF
+chmod 0644 /etc/profile.d/workshop.sh
+
+if ! grep -q 'profile.d/workshop.sh' /etc/bash.bashrc 2>/dev/null; then
+    cat >> /etc/bash.bashrc << EOF
+
+# Workshop environment
+[ -f /etc/profile.d/workshop.sh ] && . /etc/profile.d/workshop.sh
+[ -f /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion
+cd ${WORKSHOP_DIR} 2>/dev/null || true
+EOF
+fi
+
+# 9. Start background services.
+log "Starting the proxy and the control panel"
+nohup mitmdump \
+    --listen-port 8888 \
+    --set block_global=false \
+    --set ssl_insecure=false \
+    -s /root/proxy/toggle_addon.py \
+    > /tmp/proxy.log 2>&1 &
+
+nohup /opt/proxy-venv/bin/python /root/proxy/controlpanel.py \
+    > /tmp/controlpanel.log 2>&1 &
+
+# AccountId and TransferStatus are registered up front: exercise 4 onwards
+# sets both. A dev server started without them fails that Workflow Task.
+log "Starting the Temporal dev server"
+nohup temporal server start-dev \
+    --ip 0.0.0.0 \
+    --db-filename /root/temporal.db \
+    --search-attribute AccountId=Keyword \
+    --search-attribute TransferStatus=Keyword \
+    --log-level warn \
+    > /tmp/temporal-server.log 2>&1 &
+
+HEALTHY=false
+for _ in $(seq 1 60); do
+    if temporal operator cluster health --address 127.0.0.1:7233 >/dev/null 2>&1; then
+        HEALTHY=true
+        log "Temporal server healthy"
+        break
+    fi
+    sleep 1
+done
+if [ "${HEALTHY}" != true ]; then
+    echo "ERROR: the Temporal dev server did not become healthy. See /tmp/temporal-server.log." >&2
+    tail -20 /tmp/temporal-server.log >&2 || true
+    exit 1
+fi
+
+# 10. Seed the exercise 8 replay history.
+#     Exercise 8's replay test reads src/workflow-history-v1.json. Task 4 of
+#     that exercise walks through generating one by hand. Seeding the copy
+#     from solution8 means the replay test is runnable without that detour.
+if [ ! -f "${WORKSHOP_DIR}/exercise8/src/workflow-history-v1.json" ]; then
+    cp "${WORKSHOP_DIR}/solution8/src/workflow-history-v1.json" \
+       "${WORKSHOP_DIR}/exercise8/src/workflow-history-v1.json" 2>/dev/null || true
+fi
+
+# 11. Warm the caches. TestWorkflowEnvironment.createLocal() downloads a
+#     Temporal dev server binary into /tmp on first use, and ts-node compiles
+#     on first run. Running the exercise 6 reference tests once here does both,
+#     so the first test run in exercises 6 and 8 does not stall on a download.
+#     The cached binary has a one-day TTL; after that the SDK re-downloads it
+#     through the proxy, which step 6's CA trust covers.
+log "Warming the test server download and the ts-node cache"
+timeout 300 npx mocha --exit 'solution6/src/*.test.ts' \
+    --require ts-node/register --timeout 120000 \
+    || log "WARNING: warm-up test run failed. The first unit test run will download the test server."
+
+log "Sandbox provisioning complete."

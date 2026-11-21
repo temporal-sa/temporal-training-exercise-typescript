@@ -1,0 +1,76 @@
+#!/bin/bash
+# ABOUTME: Check script. Gate 1: TODOs gone. Gate 2: the Activity, the patch and the replay test are present. Gate 3: both tests pass. Gate 4: a new execution ran the notification.
+fail() { echo "FAIL: $1"; exit 1; }
+pass() { echo "PASS: $1"; }
+
+cd /root/workshop || fail "Workshop directory is missing."
+EX=exercise8/src
+STAMP_FILE=/tmp/workshop-challenge-08.started
+
+# ID of the most recent Workflow matching the visibility query in $1 that
+# started after this challenge's setup ran. Exercises 2 to 8 share one task
+# queue, so without the time filter a Workflow from an earlier challenge would
+# satisfy this one.
+latest_workflow() {
+    local query="$1"
+    if [ -s "$STAMP_FILE" ]; then
+        query="$query AND StartTime >= \"$(cat "$STAMP_FILE")\""
+    fi
+    temporal workflow list \
+        --address 127.0.0.1:7233 --namespace default \
+        --query "$query" --limit 1 -o json 2>/dev/null \
+        | jq -r '.[0].execution.workflowId // empty' 2>/dev/null
+}
+
+# Full event history of the Workflow in $1, as JSON.
+history_json() {
+    temporal workflow show \
+        --address 127.0.0.1:7233 --namespace default \
+        --workflow-id "$1" -o json 2>/dev/null
+}
+
+no_todos() {
+    for f in "$@"; do
+        if grep -q "TODO" "$EX/$f" 2>/dev/null; then
+            fail "$f still has TODO comments. Implement them, delete the comments, then check again."
+        fi
+    done
+    pass "All TODOs implemented"
+}
+
+no_todos activities.ts workflow.ts workflow.test.ts
+
+if ! grep -q "export async function sendNotification" "$EX/activities.ts" 2>/dev/null; then
+    fail "activities.ts has no sendNotification Activity."
+fi
+pass "sendNotification Activity defined"
+
+if ! grep -q "patched('add-notification')" "$EX/workflow.ts" 2>/dev/null; then
+    fail "workflow.ts never calls patched('add-notification'). Without it the old histories will not replay."
+fi
+pass "patched('add-notification') gates the new Activity"
+
+if [ ! -f "$EX/workflow-history-v1.json" ]; then
+    fail "exercise8/src/workflow-history-v1.json is missing. The replay test needs a pre-patch history."
+fi
+if ! grep -q "runReplayHistory" "$EX/workflow.test.ts" 2>/dev/null; then
+    fail "workflow.test.ts never calls Worker.runReplayHistory(). Write the replay test."
+fi
+pass "Replay test and pre-patch history present"
+
+if ! OUT=$(timeout 300 npx mocha --exit "$EX/workflow.test.ts" --require ts-node/register --timeout 60000 2>&1); then
+    echo "$OUT" | tail -30
+    fail "The exercise 8 tests did not pass. The replay test is the one that catches non-determinism."
+fi
+PASSING=$(echo "$OUT" | grep -oE "[0-9]+ passing" | grep -oE "[0-9]+" || echo 0)
+if [ "${PASSING:-0}" -lt 2 ]; then
+    echo "$OUT" | tail -15
+    fail "Only ${PASSING:-0} test passed. Both the new-execution test and the replay test have to run."
+fi
+pass "Both tests pass, replay included"
+
+WF_ID=$(latest_workflow 'TaskQueue="money-transfer-task-queue" AND ExecutionStatus="Completed"')
+if [ -z "$WF_ID" ] || ! history_json "$WF_ID" | grep -q '"sendNotification"'; then
+    fail "No transfer that ran sendNotification has completed since this challenge started. Restart the Worker on the new code and run the starter."
+fi
+pass "Workflow $WF_ID ran the patched notification step"

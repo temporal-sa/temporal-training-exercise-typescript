@@ -1,0 +1,29 @@
+#!/bin/bash
+# ABOUTME: Solve script. Mimics a learner solving the challenge.
+# Runs on Skip and on `instruqt track test`. It must leave the check passing:
+# copy the finished code in, then run the shipped starter. It starts from 'invalid-account' and sends the retry and approve Signals itself, so the Workflow fails once, gets corrected, and completes.
+set -uo pipefail
+cd /root/workshop || exit 0
+
+# Start the Worker in the background and wait until it is polling. ts-node
+# compiles and the Worker bundles the Workflow code first, which takes a
+# while; a Query sent before the Worker polls fails with "no poller seen".
+start_worker() {
+    pkill -f "src/worker/index.ts" 2>/dev/null || true
+    sleep 1
+    nohup npx ts-node exercise7/src/worker/index.ts > /tmp/solve-07-worker.log 2>&1 &
+    WORKER_PID=$!
+    for _ in $(seq 1 120); do
+        grep -q "RUNNING" /tmp/solve-07-worker.log 2>/dev/null && return 0
+        sleep 1
+    done
+    echo "Worker did not report RUNNING within 120s; continuing anyway."
+}
+
+cp -R solution7/src/. exercise7/src/
+
+start_worker
+timeout 180 npx ts-node exercise7/src/starter/index.ts
+kill "$WORKER_PID" 2>/dev/null || true
+
+exit 0

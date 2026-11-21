@@ -1,0 +1,107 @@
+#!/bin/bash
+# ABOUTME: Per-challenge setup. Runs when the attendee enters this challenge.
+#
+# The whole repo is staged once by the sandbox preset's setup script, so this
+# only clears stragglers from a prior chapter and stamps the start time. The
+# check reads the stamp to ignore Workflows completed before this challenge.
+set -euo pipefail
+
+pkill -f "src/worker/index.ts"  2>/dev/null || true
+pkill -f "src/starter/index.ts" 2>/dev/null || true
+
+date -u +%Y-%m-%dT%H:%M:%SZ > /tmp/workshop-challenge-06.started
+
+# exercise6 ships the finished Workflow and no test file. Drop in a scaffold
+# with TODOs for the attendee to complete, unless one is already there (a
+# re-entered challenge keeps the attendee's work).
+TEST=/root/workshop/exercise6/src/workflow.test.ts
+if [ ! -f "$TEST" ]; then
+    cat > "$TEST" << 'EOF'
+import { TestWorkflowEnvironment } from '@temporalio/testing';
+import { Worker } from '@temporalio/worker';
+import { defineSearchAttributeKey, SearchAttributeType } from '@temporalio/common';
+import assert from 'assert';
+import { transfer, approveSignal, getStatusQuery } from './workflow';
+import type { TransferRequest } from './models';
+
+describe('MoneyTransfer Workflow', () => {
+  let testEnv: TestWorkflowEnvironment;
+  let worker: Worker;
+  let runPromise: Promise<void>;
+
+  before(async function () {
+    this.timeout(120000);
+    // A dev server started in-process for the test run. The Workflow upserts
+    // AccountId, so the test server has to have it registered.
+    testEnv = await TestWorkflowEnvironment.createLocal({
+      server: {
+        searchAttributes: [
+          defineSearchAttributeKey('AccountId', SearchAttributeType.KEYWORD),
+          defineSearchAttributeKey('TransferStatus', SearchAttributeType.KEYWORD),
+        ],
+      },
+    });
+    worker = await Worker.create({
+      connection: testEnv.nativeConnection,
+      taskQueue: 'test-queue',
+      workflowsPath: require.resolve('./workflow'),
+      // TODO: Mock withdraw, deposit and refund. The real Activities fail at
+      // random; a mock that resolves immediately makes every run deterministic.
+      activities: {},
+    });
+    runPromise = worker.run();
+  });
+
+  after(async () => {
+    worker.shutdown();
+    await runPromise;
+    await testEnv.teardown();
+  });
+
+  const makeRequest = (transferId: string): TransferRequest => ({
+    fromAccount: 'account-123',
+    toAccount: 'account-456',
+    amount: 100.0,
+    transferId,
+  });
+
+  it('completes successfully when approved', async () => {
+    const { client } = testEnv;
+    const handle = await client.workflow.start(transfer, {
+      taskQueue: 'test-queue',
+      workflowId: `test-approved-${Date.now()}`,
+      args: [makeRequest('transfer-1')],
+    });
+
+    // TODO: Signal approveSignal with true, wait for handle.result(), and
+    // assert it equals 'Transfer completed successfully'.
+  });
+
+  it('refunds when rejected', async () => {
+    const { client } = testEnv;
+    const handle = await client.workflow.start(transfer, {
+      taskQueue: 'test-queue',
+      workflowId: `test-rejected-${Date.now()}`,
+      args: [makeRequest('transfer-2')],
+    });
+
+    // TODO: Signal approveSignal with false, wait for handle.result(), and
+    // assert it equals 'Transfer rejected and refunded'.
+  });
+
+  it('returns PENDING status before approval', async () => {
+    const { client } = testEnv;
+    const handle = await client.workflow.start(transfer, {
+      taskQueue: 'test-queue',
+      workflowId: `test-pending-${Date.now()}`,
+      args: [makeRequest('transfer-3')],
+    });
+
+    // TODO: Query getStatusQuery and assert it equals 'PENDING'. Then approve
+    // and await the result so the Workflow does not outlive the test.
+  });
+});
+EOF
+fi
+
+echo "Exercise 6 ready."

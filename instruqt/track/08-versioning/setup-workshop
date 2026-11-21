@@ -1,0 +1,21 @@
+#!/bin/bash
+# ABOUTME: Per-challenge setup. Runs when the attendee enters this challenge.
+#
+# The whole repo is staged once by the sandbox preset's setup script, so this
+# only clears stragglers from a prior chapter and stamps the start time. The
+# check reads the stamp to ignore Workflows completed before this challenge.
+set -euo pipefail
+
+pkill -f "src/worker/index.ts"  2>/dev/null || true
+pkill -f "src/starter/index.ts" 2>/dev/null || true
+
+date -u +%Y-%m-%dT%H:%M:%SZ > /tmp/workshop-challenge-08.started
+
+# The replay test reads this history. The sandbox preset seeds it, but seed it
+# here too so an attendee who jumps straight to this challenge is not stuck.
+if [ ! -f /root/workshop/exercise8/src/workflow-history-v1.json ]; then
+    cp /root/workshop/solution8/src/workflow-history-v1.json \
+       /root/workshop/exercise8/src/workflow-history-v1.json 2>/dev/null || true
+fi
+
+echo "Exercise 8 ready."

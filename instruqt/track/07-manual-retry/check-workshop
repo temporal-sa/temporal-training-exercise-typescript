@@ -1,0 +1,66 @@
+#!/bin/bash
+# ABOUTME: Check script. Gate 1: TODOs gone. Gate 2: non-retryable error and retry handler. Gate 3: a transfer completed after a failed Activity and a retry Signal.
+fail() { echo "FAIL: $1"; exit 1; }
+pass() { echo "PASS: $1"; }
+
+cd /root/workshop || fail "Workshop directory is missing."
+EX=exercise7/src
+STAMP_FILE=/tmp/workshop-challenge-07.started
+
+# ID of the most recent Workflow matching the visibility query in $1 that
+# started after this challenge's setup ran. Exercises 2 to 8 share one task
+# queue, so without the time filter a Workflow from an earlier challenge would
+# satisfy this one.
+latest_workflow() {
+    local query="$1"
+    if [ -s "$STAMP_FILE" ]; then
+        query="$query AND StartTime >= \"$(cat "$STAMP_FILE")\""
+    fi
+    temporal workflow list \
+        --address 127.0.0.1:7233 --namespace default \
+        --query "$query" --limit 1 -o json 2>/dev/null \
+        | jq -r '.[0].execution.workflowId // empty' 2>/dev/null
+}
+
+# Full event history of the Workflow in $1, as JSON.
+history_json() {
+    temporal workflow show \
+        --address 127.0.0.1:7233 --namespace default \
+        --workflow-id "$1" -o json 2>/dev/null
+}
+
+no_todos() {
+    for f in "$@"; do
+        if grep -q "TODO" "$EX/$f" 2>/dev/null; then
+            fail "$f still has TODO comments. Implement them, delete the comments, then check again."
+        fi
+    done
+    pass "All TODOs implemented"
+}
+
+no_todos activities.ts workflow.ts
+
+if ! grep -q "ApplicationFailure.nonRetryable" "$EX/activities.ts" 2>/dev/null; then
+    fail "activities.ts never throws ApplicationFailure.nonRetryable(). Automatic retry will keep hammering the bad account."
+fi
+pass "Invalid accounts fail without automatic retry"
+
+if ! grep -q "setHandler(retrySignal" "$EX/workflow.ts" 2>/dev/null; then
+    fail "workflow.ts never calls setHandler(retrySignal, ...). The corrected data has no way in."
+fi
+pass "retry Signal handler registered"
+
+WF_ID=$(latest_workflow 'TaskQueue="money-transfer-task-queue" AND ExecutionStatus="Completed"')
+if [ -z "$WF_ID" ]; then
+    fail "No money transfer Workflow has completed since this challenge started. Start the Worker, run the starter, and wait for the result to print."
+fi
+pass "Money transfer Workflow $WF_ID completed"
+
+HISTORY=$(history_json "$WF_ID")
+if ! echo "$HISTORY" | grep -q "ACTIVITY_TASK_FAILED"; then
+    fail "Workflow $WF_ID completed without an Activity failing. Run a transfer that starts from 'invalid-account' so the manual retry path runs."
+fi
+if ! echo "$HISTORY" | grep -q '"signalName": *"retry"'; then
+    fail "Workflow $WF_ID completed without a retry Signal. Send one with the corrected account."
+fi
+pass "Transfer completed after a failed Activity and a manual retry"
