@@ -45,6 +45,16 @@ describe('Workflow', () => {
 });
 ```
 
+### Server startup timeout
+
+Both `createLocal()` and `createTimeSkipping()` accept ephemeral server options under `server`, including `startupTimeout` (a `Duration`). It is the maximum time to wait for server readiness after spawning the process, excluding executable download time. Default: `'5s'`.
+
+```typescript
+testEnv = await TestWorkflowEnvironment.createLocal({
+  server: { startupTimeout: '30s' },
+});
+```
+
 ## Activity Mocking
 
 ```typescript
@@ -141,6 +151,12 @@ describe('Failure handling', () => {
 ```
 
 ## Replay Testing
+
+For replay tests that read history from a JSON file, use the [CLI export command](../core/cli-workflow-commands.md#workflow-show) to create that file.
+
+For worker integration tests that should replay workflow history on every Workflow Task, configure the worker with `maxCachedWorkflows: 0`. This complements replaying saved histories with `Worker.runReplayHistory`.
+
+To make nondeterminism fail the Workflow Execution immediately in a test, configure the worker with `workflowFailureErrorTypes: { '*': ['NondeterminismError'] }`.
 
 ```typescript
 import { Worker } from '@temporalio/worker';

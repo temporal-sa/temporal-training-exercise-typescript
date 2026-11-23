@@ -1,6 +1,6 @@
 # Python SDK Versioning
 
-For conceptual overview and guidance on choosing an approach, see `references/core/versioning.md`.
+For conceptual overview and guidance on choosing an approach, see [Temporal versioning guide](../core/versioning.md).
 
 ## Patching API
 
@@ -31,11 +31,35 @@ class ShippingWorkflow:
 
 **How it works:**
 
-- For new executions: `patched()` returns `True` and records a marker in the Workflow history
+- On the first live call for a new patch ID, `patched()` defaults to `True` and records a marker in Workflow history
 - For replay with the marker: `patched()` returns `True` (history includes this patch)
 - For replay without the marker: `patched()` returns `False` (history predates this patch)
 
-**Python-specific behavior:** The `patched()` return value is memoized on first call. This means you cannot reliably use `patched()` in loops—it will return the same value every iteration. Workaround: append a sequence number to the patch ID for each iteration (e.g., `f"my-change-{i}"`).
+Repeated calls with the same patch ID reuse the memoized decision.
+
+### Gate a new patch during rollout
+
+The experimental `Worker(..., patch_activation_callback=...)` option receives `PatchActivationInput` at the first live encounter with a non-deprecated patch ID. Returning `False` leaves `workflow.patched()` false and writes no marker. Returning `True` activates the patch and records a marker. Replay follows history, and a recorded patch bypasses the callback.
+
+Read the rollout flag in Worker startup code and capture its Boolean value in the callback.
+
+```python
+import os
+
+from temporalio.worker import Worker
+
+enable_email_path = os.environ.get("ENABLE_EMAIL_PATH") == "true"
+worker = Worker(
+    client,
+    task_queue="orders",
+    workflows=[MyWorkflow],
+    patch_activation_callback=lambda patch: (
+        patch.patch_id != "send-email-instead-of-fax" or enable_email_path
+    ),
+)
+```
+
+In the Workflow, use `workflow.patched("send-email-instead-of-fax")` to choose between the two branches. The callback returns only the rollout decision. The Workflow branch schedules the Activity.
 
 ### Three-Step Patching Process
 
@@ -183,6 +207,9 @@ temporal workflow list --query 'WorkflowType = "PizzaWorkflow" AND ExecutionStat
 
 Worker Versioning manages versions at the deployment level, allowing multiple Worker versions to run simultaneously.
 
+> [!IMPORTANT]
+> Use the Worker Deployment APIs described below. The older Build ID-based APIs manage legacy compatibility sets and are deprecated.
+
 ### Key Concepts
 
 **Worker Deployment**: A logical service grouping similar Workers together (e.g., "loan-processor"). All versions of your code live under this umbrella.
@@ -192,11 +219,8 @@ Worker Versioning manages versions at the deployment level, allowing multiple Wo
 ### Configuring Workers for Versioning
 
 ```python
-from temporalio.worker import Worker
-from temporalio.worker.deployment_config import (
-    WorkerDeploymentConfig,
-    WorkerDeploymentVersion,
-)
+from temporalio.common import VersioningBehavior, WorkerDeploymentVersion
+from temporalio.worker import Worker, WorkerDeploymentConfig
 
 worker = Worker(
     client,
@@ -209,15 +233,24 @@ worker = Worker(
             build_id="v1.0.0",  # or git commit hash
         ),
         use_worker_versioning=True,
+        default_versioning_behavior=VersioningBehavior.PINNED,
     ),
 )
 ```
 
-**Configuration parameters:**
+> [!IMPORTANT]
+> With `use_worker_versioning=True`, every registered Workflow must declare a versioning behavior (`@workflow.defn(versioning_behavior=...)`, see below) unless `default_versioning_behavior` is set. Otherwise the `Worker` constructor raises `ValueError: Workflow ... must specify a versioning behavior`.
 
+`WorkerDeploymentConfig` accepts exactly three parameters:
+
+- `version`: A `WorkerDeploymentVersion` identifying this Worker Deployment Version
 - `use_worker_versioning`: Enables Worker Versioning
-- `version`: Identifies the Worker Deployment Version (deployment name + build ID)
-- Build ID: Typically a git commit hash, version number, or timestamp
+- `default_versioning_behavior`: Fallback `VersioningBehavior` for Workflows that do not declare one
+
+`WorkerDeploymentVersion` accepts exactly two parameters:
+
+- `deployment_name`: The logical service name (e.g., "my-service")
+- `build_id`: The code-version component, typically a git commit hash, version number, or timestamp
 
 ### PINNED vs AUTO_UPGRADE Behaviors
 
@@ -321,6 +354,45 @@ This works well with Kubernetes where you manage multiple ReplicaSets running di
 temporal workflow list --query \
   'TemporalWorkerDeploymentVersion = "my-service:v1.0.0" AND ExecutionStatus = "Running"'
 ```
+
+## Upgrading on Continue-as-New
+
+> [!NOTE]
+> This feature is in Public Preview. It is perfectly acceptable to use this feature on behalf of a user, but you should inform them that you are making use of a feature in Public Preview.
+
+For long-running Pinned Workflows that use Continue-as-New, detect a new Target Worker Deployment Version on `workflow.info()` and continue-as-new with `ContinueAsNewVersioningBehavior.AUTO_UPGRADE` so the new run starts on the Target Version. See [Temporal versioning guide](../core/versioning.md) for the conceptual model.
+
+### Detecting the Target Version change
+
+`workflow.info().is_target_worker_deployment_version_changed()` returns `True` when a new Current or Ramping Version is available for this Workflow's Worker Deployment. The flag is refreshed after each Workflow Task completes.
+
+Check the flag from code that runs as part of a Workflow Task — for example, before accepting an Update, starting an Activity, or starting a child Workflow.
+
+### Continue-as-new with upgrade
+
+When the flag is set, call `workflow.continue_as_new` with `initial_versioning_behavior=ContinueAsNewVersioningBehavior.AUTO_UPGRADE` so the new run starts on the Target Version of its Worker Deployment.
+
+```python
+from temporalio import workflow
+from temporalio.workflow import ContinueAsNewVersioningBehavior
+
+# At a natural Workflow Task boundary, e.g. before accepting Updates,
+# starting Activities, starting child Workflows, etc.:
+if workflow.info().is_target_worker_deployment_version_changed():
+    workflow.continue_as_new(
+        next_input,
+        initial_versioning_behavior=ContinueAsNewVersioningBehavior.AUTO_UPGRADE,
+    )
+```
+
+> [!IMPORTANT]
+> Don't busy-poll the flag on a timer. Check it at a natural Workflow Task boundary — before accepting Updates, starting Activities, starting child Workflows, etc. For idle Workflows, send a Signal to wake them so they can check it (see Limitations).
+
+### Limitations
+
+- **Lazy moving only — idle Workflows do not upgrade.** Send a Signal to wake an idle Workflow so it can check `is_target_worker_deployment_version_changed`.
+- **Workflow input must remain compatible across versions.** The new version's Workflow definition must accept the previous version's input; otherwise the new run may fail on its first Workflow Task.
+- **Pinned Workflow Types only.** Auto-Upgrade Workflows move at Workflow Task boundaries already; the upgrade-on-CaN pattern adds nothing for them.
 
 ## Best Practices
 

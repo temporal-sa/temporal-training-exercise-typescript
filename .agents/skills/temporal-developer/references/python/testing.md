@@ -118,6 +118,12 @@ async def test_activity_failure_handling():
 
 ## Workflow Replay Testing
 
+For replay tests that read history from a JSON file, use the [CLI export command](../core/cli-workflow-commands.md#workflow-show) to create that file.
+
+For worker integration tests that should replay workflow history on every Workflow Task, configure the worker with `max_cached_workflows=0`. This complements replaying saved histories with `Replayer`.
+
+To make nondeterminism fail the Workflow Execution immediately in a test, pass `workflow_failure_exception_types=[workflow.NondeterminismError]` to `Worker` (with `from temporalio import workflow`).
+
 ```python
 import json
 import pytest
@@ -153,6 +159,37 @@ async def test_activity():
     result = await env.run(my_activity, "arg1", "arg2")
     assert result == "expected"
 ```
+
+
+### Set Activity Info for a Test
+
+`ActivityEnvironment()` supplies test values for `activity.info()`. To exercise a branch based on the retry attempt or the execution type, replace the relevant fields in `ActivityEnvironment.default_info()` and assign the result to `env.info` before calling `env.run()`.
+
+```python
+from dataclasses import replace
+
+from temporalio import activity
+from temporalio.testing import ActivityEnvironment
+
+def retrying_standalone_activity() -> bool:
+    info = activity.info()
+    return info.attempt > 1 and not info.in_workflow
+
+def test_retrying_standalone_activity():
+    env = ActivityEnvironment()
+    env.info = replace(
+        ActivityEnvironment.default_info(),
+        attempt=2,
+        workflow_id=None,
+        workflow_run_id=None,
+        workflow_namespace=None,
+        workflow_type=None,
+        activity_run_id="test-activity-run",
+    )
+    assert env.run(retrying_standalone_activity)
+```
+
+For an async Activity, await `env.run(...)`.
 
 ## Best Practices
 
